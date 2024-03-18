@@ -86,7 +86,8 @@ END;
 
 ```sql
 CREATE OR REPLACE FUNCTION f_Montant_Facture(p_num_facture IN NUMBER)
-RETURN NUMBER IS
+RETURN NUMBER
+IS
     v_montant_facture NUMBER(10, 2);
 BEGIN
     SELECT COALESCE(SUM(c.tarif), 0)
@@ -199,7 +200,8 @@ END;
 
 ```sql
 CREATE OR REPLACE FUNCTION f_Nb_Films_Dans_Cat(p_id_categorie IN NUMBER)
-RETURN NUMBER IS
+RETURN NUMBER
+IS
     v_nb_films NUMBER;
 BEGIN
     SELECT COALESCE(COUNT(*), 0)
@@ -227,7 +229,8 @@ ORDER BY nb_films DESC;
 > Écrire la procédure `p_Afficher_Cats_Parentes` permettant d’afficher le nom de toutes les catégories parentes (une par ligne) de la catégorie dont l’identifiant est passé en paramètre.
 
 ```sql
-CREATE OR REPLACE PROCEDURE p_Afficher_Cats_Parentes(p_id_categorie IN NUMBER) IS
+CREATE OR REPLACE PROCEDURE p_Afficher_Cats_Parentes(p_id_categorie IN NUMBER)
+IS
 BEGIN
     FOR categorie IN (
         SELECT c.*
@@ -247,7 +250,31 @@ END;
 > Votre fonction doit retourner la valeur `O` si la catégorie ayant pour identifiant `id_cat_enfant` est un descendant de la catégorie `id_cat_parent`, ou `N` sinon.
 
 ```sql
+CREATE OR REPLACE FUNCTION f_Est_Sous_Categorie(
+    id_cat_enfant IN NUMBER,
+    id_cat_parent IN NUMBER
+)
+RETURN VARCHAR2
+IS
+    v_resultat VARCHAR2(1);
+BEGIN
+    SELECT CASE
+        WHEN EXISTS (
+            SELECT 1
+            FROM categories
+            START WITH id_cat = id_cat_enfant
+            CONNECT BY PRIOR id_cat_parent = id_cat
+            AND id_cat_parent != id_cat
+            AND LEVEL > 1
+        ) THEN 'O'
+        ELSE 'N'
+    END
+    INTO v_resultat
+    FROM dual;
 
+    RETURN v_resultat;
+END;
+/
 ```
 
 ## Question 9
@@ -258,7 +285,59 @@ END;
 >> Note: Il serait judicieux de créer une autre fonction pour implémenter cette fonction.
 
 ```sql
+-- Fonction comptant le nombre de films loués par le client dans chaque catégorie principale
+CREATE OR REPLACE FUNCTION f_Compter_Films_Loues_Par_Categorie(
+    id_client IN NUMBER
+)
+RETURN CURSOR
+IS
+    v_cursor CURSOR;
+BEGIN
+    OPEN v_cursor FOR
+        SELECT c.id_cat, COUNT(*) AS nb_films_loues
+        FROM locations l
+        JOIN films f ON l.id_film = f.id_film
+        JOIN categories c ON f.id_cat = c.id_cat
+        WHERE l.id_client = id_client
+        AND NOT EXISTS (
+            SELECT 1
+            FROM categories c_parent
+            WHERE c.id_cat = c_parent.id_cat_parent
+        )
+        GROUP BY c.id_cat;
 
+    RETURN v_cursor;
+END;
+/
+
+-- Fonction déterminant la catégorie principale la plus populaire pour un client
+CREATE OR REPLACE FUNCTION f_Categorie_Plus_Populaire(
+    id_client IN NUMBER
+)
+RETURN NUMBER
+IS
+    v_id_categorie NUMBER;
+BEGIN
+    SELECT id_cat
+    INTO v_id_categorie
+    FROM (
+        SELECT id_cat, RANK() OVER (ORDER BY COUNT(*) DESC) AS classement
+        FROM locations l
+        JOIN films f ON l.id_film = f.id_film
+        JOIN categories c ON f.id_cat = c.id_cat
+        WHERE l.id_client = id_client
+        AND NOT EXISTS (
+            SELECT 1
+            FROM categories c_parent
+            WHERE c.id_cat = c_parent.id_cat_parent
+        )
+        GROUP BY c.id_cat
+    )
+    WHERE classement = 1;
+
+    RETURN v_id_categorie;
+END;
+/
 ```
 
 ## Question 10
@@ -267,5 +346,11 @@ END;
 > La catégorie la plus populaire est celle est qui la plus populaire chez le plus grand nombre de clients.
 
 ```sql
-
+SELECT c.id_cat AS id_categorie, COUNT(DISTINCT f_Categorie_Plus_Populaire(l.id_client))
+AS popularite
+FROM locations l
+JOIN films f ON l.id_film = f.id_film
+JOIN categories c ON f.id_cat = c.id_cat
+GROUP BY c.id_cat
+ORDER BY popularite DESC;
 ```
